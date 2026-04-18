@@ -1,124 +1,152 @@
 // Based on https://github.com/ubuntu/gnome-shell-extension-appindicator
 
-"use strict";
+import Adw from 'gi://Adw';
+import Gio from 'gi://Gio';
+import Gtk from 'gi://Gtk';
+import GObject from 'gi://GObject';
 
-const {
-    Gio,
-    Gtk,
-    GObject
-} = imports.gi;
-
-const ExtensionUtils = imports.misc.extensionUtils;
+import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 const WMCLASS_LIST = 'by-class';
 const IGNORELIST_ENABLED = 'enable-ignorelist';
 
-function init() {}
+export default class NoAnnoyancePreferences extends ExtensionPreferences {
+    fillPreferencesWindow(window) {
+        const settings = this.getSettings('org.gnome.shell.extensions.noannoyance');
 
-function buildPrefsWidget() {
-    let settings = ExtensionUtils.getSettings(
-        "org.gnome.shell.extensions.noannoyance"
-    );
+        const page = new Adw.PreferencesPage();
+        const group = new Adw.PreferencesGroup({
+            title: 'NoAnnoyance Settings',
+        });
+        page.add(group);
 
-    let settingsBox = new Gtk.Box({
-        orientation: Gtk.Orientation.VERTICAL,
-        spacing: 8,
-        margin_bottom: 60,
-    });
+        // Enable Ignorelist Toggle
+        const ignorelistRow = new Adw.ActionRow({
+            title: 'Enable Ignorelist',
+            subtitle: 'Prevent specific applications from stealing focus',
+        });
 
-    let enableIgnorelistBox = new Gtk.Box({
-        orientation: Gtk.Orientation.HORIZONTAL,
-    });
-    let wmClassBox = new Gtk.Box({
-        orientation: Gtk.Orientation.HORIZONTAL
-    });
+        const toggle = new Gtk.Switch({
+            active: settings.get_boolean(IGNORELIST_ENABLED),
+            valign: Gtk.Align.CENTER,
+        });
 
-    let toggleLabel = new Gtk.Label({
-        label: "Enable Ignorelist",
-        halign: Gtk.Align.START,
-        hexpand: true,
-        visible: true,
-    });
+        settings.bind(
+            IGNORELIST_ENABLED,
+            toggle,
+            'active',
+            Gio.SettingsBindFlags.DEFAULT
+        );
 
-    let toggle = new Gtk.Switch({
-        active: settings.get_boolean(IGNORELIST_ENABLED),
-        halign: Gtk.Align.END,
-        visible: true,
-    });
+        ignorelistRow.add_suffix(toggle);
+        ignorelistRow.activatable_widget = toggle;
+        group.add(ignorelistRow);
 
-    enableIgnorelistBox.append(toggleLabel);
-    enableIgnorelistBox.append(toggle);
+        // WM_CLASS List Section
+        const listGroup = new Adw.PreferencesGroup({
+            title: 'WM_CLASS List',
+            description: 'Applications in this list will NOT have focus stolen\n("Alt + F2" > Run "lg" > Click "Windows" to find WM_CLASS)',
+        });
+        page.add(listGroup);
 
-    settings.bind(
-        IGNORELIST_ENABLED,
-        toggle,
-        "active",
-        Gio.SettingsBindFlags.DEFAULT
-    );
+        // Create a scrolled window for the list
+        const scrolled = new Gtk.ScrolledWindow({
+            vexpand: true,
+            hexpand: true,
+            min_content_height: 300,
+        });
 
-    settingsBox.append(enableIgnorelistBox);
+        const listBox = new Gtk.ListBox({
+            selection_mode: Gtk.SelectionMode.NONE,
+            css_classes: ['boxed-list'],
+        });
+        scrolled.set_child(listBox);
 
-    const customListStore = new Gtk.ListStore();
-    customListStore.set_column_types([GObject.TYPE_STRING]);
-    const customInitArray = settings.get_strv(WMCLASS_LIST);
-    for (let i = 0; i < customInitArray.length; i++) {
-        customListStore.set(customListStore.append(), [0], [customInitArray[i]]);
-    }
-    customListStore.append();
+        const listFrame = new Gtk.Frame();
+        listFrame.set_child(scrolled);
+        listGroup.add(listFrame);
 
-    const customTreeView = new Gtk.TreeView({
-        model: customListStore,
-        hexpand: true,
-        vexpand: true,
-    });
-
-    const indicatorIdColumn = new Gtk.TreeViewColumn({
-        title: 'WM__CLASS List ("Alt + F2" > Run "lg" > Click "Windows")',
-        sizing: Gtk.TreeViewColumnSizing.AUTOSIZE,
-    });
-
-    const cellrenderer = new Gtk.CellRendererText({
-        editable: true
-    });
-
-    indicatorIdColumn.pack_start(cellrenderer, true);
-    indicatorIdColumn.add_attribute(cellrenderer, "text", 0);
-    customTreeView.insert_column(indicatorIdColumn, 0);
-    customTreeView.set_grid_lines(Gtk.TreeViewGridLines.BOTH);
-
-    wmClassBox.append(customTreeView);
-    settingsBox.append(wmClassBox);
-
-    cellrenderer.connect("edited", (w, path, text) => {
-        this.selection = customTreeView.get_selection();
-        const selection = this.selection.get_selected();
-        const iter = selection[2];
-
-        customListStore.set(iter, [0], [text]);
-        const storeLength = customListStore.iter_n_children(null);
-        const customIconArray = [];
-
-        for (let i = 0; i < storeLength; i++) {
-            const returnIter = customListStore.iter_nth_child(null, i);
-            const [success, iterList] = returnIter;
-            if (!success) break;
-
-            if (iterList) {
-                const id = customListStore.get_value(iterList, 0);
-                if (id) customIconArray.push(id);
-            } else {
-                break;
+        // Populate existing entries
+        const updateList = () => {
+            // Clear existing rows
+            let child = listBox.get_first_child();
+            while (child) {
+                const next = child.get_next_sibling();
+                listBox.remove(child);
+                child = next;
             }
-        }
-        settings.set_strv(WMCLASS_LIST, customIconArray);
 
-        if (storeLength === 1 && text) customListStore.append();
+            const wmClasses = settings.get_strv(WMCLASS_LIST);
+            wmClasses.forEach((wmClass, index) => {
+                const row = createWmClassRow(wmClass, index, settings);
+                listBox.append(row);
+            });
 
-        if (storeLength > 1) {
-            if (!text && storeLength - 1 > path) customListStore.remove(iter);
-            if (text && storeLength - 1 <= path) customListStore.append();
+            // Add empty row for new entry
+            const addRow = createAddRow(settings, updateList);
+            listBox.append(addRow);
+        };
+
+        updateList();
+
+        window.add(page);
+    }
+}
+
+function createWmClassRow(wmClass, index, settings) {
+    const row = new Adw.ActionRow({
+        title: wmClass,
+    });
+
+    const deleteButton = new Gtk.Button({
+        icon_name: 'user-trash-symbolic',
+        valign: Gtk.Align.CENTER,
+        css_classes: ['flat'],
+    });
+
+    deleteButton.connect('clicked', () => {
+        const wmClasses = settings.get_strv(WMCLASS_LIST);
+        wmClasses.splice(index, 1);
+        settings.set_strv(WMCLASS_LIST, wmClasses);
+    });
+
+    row.add_suffix(deleteButton);
+    return row;
+}
+
+function createAddRow(settings, updateCallback) {
+    const row = new Adw.ActionRow({
+        title: 'Add new WM_CLASS',
+    });
+
+    const entry = new Gtk.Entry({
+        placeholder_text: 'Enter WM_CLASS name',
+        valign: Gtk.Align.CENTER,
+        hexpand: true,
+    });
+
+    const addButton = new Gtk.Button({
+        icon_name: 'list-add-symbolic',
+        valign: Gtk.Align.CENTER,
+        css_classes: ['flat'],
+    });
+
+    addButton.connect('clicked', () => {
+        const text = entry.get_text().trim();
+        if (text) {
+            const wmClasses = settings.get_strv(WMCLASS_LIST);
+            wmClasses.push(text);
+            settings.set_strv(WMCLASS_LIST, wmClasses);
+            entry.set_text('');
+            updateCallback();
         }
     });
 
-    return settingsBox;
+    entry.connect('activate', () => {
+        addButton.emit('clicked');
+    });
+
+    row.add_suffix(entry);
+    row.add_suffix(addButton);
+    return row;
 }
