@@ -15,6 +15,10 @@ This is a fork of https://github.com/sindex/no-annoyance, so thank you Alex for 
 - 50
 
 ## Installation
-1. git clone https://github.com/emad-elsaid/noannoyance
-2. mv noannoyance ~/.local/share/gnome-shell/extensions/noannoyance@daase.net
-3. Activate the extension in GNOME Tweaks
+
+Clone then activate
+
+``` sh
+git clone --depth=1 https://github.com/emad-elsaid/noannoyance  ~/.local/share/gnome-shell/extensions/noannoyance@daase.net
+gdbus call --session --dest org.gnome.Shell.Extensions --object-path /org/gnome/Shell/Extensions --method org.gnome.Shell.Extensions.InstallRemoteExtension  'noannoyance@daase.net'
+```
